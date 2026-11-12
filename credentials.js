@@ -1,42 +1,37 @@
-
 const role = localStorage.getItem("selectedRole");
 
 const roleTitle = document.getElementById("roleTitle");
 const roleDescription = document.getElementById("roleDescription");
-const errorMessage = document.getElementById("errorMessage");
 
-const demoAccounts = {
-    student: {
-        email: "student@demo.com",
-        password: "student123",
-        dashboard: "student-dashboard.html"
-    },
-
-    faculty: {
-        email: "faculty@demo.com",
-        password: "faculty123",
-        dashboard: "faculty-dashboard.html"
-    },
-
-    ilgc: {
-        email: "mentor@demo.com",
-        password: "mentor123",
-        dashboard: "ilgc-dashboard.html"
-    }
-};
-
-// Display the correct login heading
-const roleDetails = {
-    student: ["Student Demo Login", "Access the student dashboard"],
-    faculty: ["Faculty Demo Login", "Access the faculty dashboard"],
-    ilgc: ["Mentor Demo Login", "Access the mentor dashboard"]
-};
-
-if (!roleDetails[role]) {
+if (role === "faculty") {
+    roleTitle.textContent = "ILGC Faculty Login";
+    roleDescription.textContent = "Login to access your ILGC faculty dashboard";
+}
+else if (role === "ilgc") {
+    roleTitle.textContent = "Mentor Login";
+    roleDescription.textContent = "Login to access the Mentor management portal";
+}
+else if (role === "student") {
+    roleTitle.textContent = "Student Login";
+    roleDescription.textContent = "Login to access your student dashboard";
+}
+else {
     window.location.href = "login.html";
-} else {
-    roleTitle.textContent = roleDetails[role][0];
-    roleDescription.textContent = roleDetails[role][1];
+}
+
+const logoEl = document.querySelector(".logo");
+if (logoEl) {
+    logoEl.style.cursor = "pointer";
+    logoEl.addEventListener("click", () => {
+        if (localStorage.getItem("loggedIn") === "true") {
+            const currentRole = localStorage.getItem("selectedRole");
+            if (currentRole === "faculty") window.location.href = "faculty-dashboard.html";
+            else if (currentRole === "ilgc") window.location.href = "ilgc-dashboard.html";
+            else window.location.href = "student-dashboard.html";
+        } else {
+            window.location.href = "index.html";
+        }
+    });
 }
 
 function togglePassword() {
@@ -52,37 +47,53 @@ function togglePassword() {
     }
 }
 
-// LOCAL DEMO LOGIN
-function loginUser(event) {
+async function loginUser(event) {
     event.preventDefault();
 
-    const userId = document.getElementById("userId").value.trim();
+    let userId = document.getElementById("userId").value.trim();
     const password = document.getElementById("password").value;
+    const errorMessage = document.getElementById("errorMessage");
 
     errorMessage.textContent = "";
 
-    const account = demoAccounts[role];
-
-    if (!account) {
-        errorMessage.textContent = "Invalid role.";
-        return;
+    // Default if left empty
+    if (!userId) {
+        if (role === "faculty") {
+            userId = "anil.roy@plaksha.edu.in";
+        } else if (role === "ilgc") {
+            userId = "malini.balakrishnan@plaksha.edu.in";
+        } else {
+            userId = "param.sharma.ug25@plaksha.edu.in";
+        }
     }
 
-    if (
-        userId.toLowerCase() !== account.email ||
-        password !== account.password
-    ) {
-        errorMessage.textContent =
-            "Invalid demo email or password.";
-        return;
+    // Resolve user email if matching or custom
+    if (window.resolveUserEmail) {
+        userId = window.resolveUserEmail(userId, role);
     }
 
-    // Save local demo login state
+    // Password is bypassed: whatever was typed is accepted!
+    // Sign in through our Supabase client
+    if (window.supabaseClient && window.supabaseClient.auth) {
+        await window.supabaseClient.auth.signInWithPassword({
+            email: userId,
+            password: password || "demo"
+        });
+    }
+
+    // Save login state for dashboards
     localStorage.setItem("loggedIn", "true");
-    localStorage.setItem("userId", account.email);
+    localStorage.setItem("userId", userId);
     localStorage.setItem("selectedRole", role);
-    localStorage.setItem("demoMode", "true");
 
-    // Open the selected dashboard
-    window.location.href = account.dashboard;
+    // Go to the appropriate dashboard
+    if (role === "faculty") {
+        window.location.href = "faculty-dashboard.html";
+    }
+    else if (role === "ilgc") {
+        window.location.href = "ilgc-dashboard.html";
+    }
+    else if (role === "student") {
+        window.location.href = "student-dashboard.html";
+    }
 }

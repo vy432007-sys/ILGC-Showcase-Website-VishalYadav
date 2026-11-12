@@ -747,6 +747,14 @@ if (notifBtn) {
     notifBtn.addEventListener("click", () => goToTab(notifBtn.dataset.tab));
 }
 
+const brandLink = document.querySelector(".brand");
+if (brandLink) {
+    brandLink.addEventListener("click", (e) => {
+        e.preventDefault();
+        goToTab("home");
+    });
+}
+
 
 /* ======================================================
    SIDEBAR TOGGLE
