@@ -51,8 +51,25 @@ const DOMAINS = [
 const STATUSES = ["All", "Ongoing", "Completed", "Proposed"];
 
 let activeDomain = "All";
+let activeDomains = new Set(["All"]);
 let activeStatus = "All";
 let searchTerm = "";
+
+function getIndexProjectDomainMatchCount(project, selectedSet) {
+    if (!selectedSet || selectedSet.has("All")) return 1;
+    const list = [];
+    if (project.domain) list.push(...project.domain.split(/\s*·\s*|\s*,\s*/));
+    if (Array.isArray(project.domains)) list.push(...project.domains);
+    if (Array.isArray(project.tags)) list.push(...project.tags);
+    const pDomains = [...new Set(list.map((d) => String(d).trim().toLowerCase()).filter(Boolean))];
+    let count = 0;
+    for (const sel of selectedSet) {
+        if (pDomains.includes(String(sel).trim().toLowerCase())) {
+            count++;
+        }
+    }
+    return count;
+}
 
 
 /* ======================================================
@@ -73,16 +90,21 @@ const navSearch = document.getElementById("navSearch");
 
 function renderChips() {
 
+    const isAllActive = activeDomains.has("All");
+
     domainChipsEl.innerHTML = DOMAINS.map(
-        (domain) => `
+        (domain) => {
+            const isActive = domain === "All" ? isAllActive : (!isAllActive && activeDomains.has(domain));
+            return `
             <button
                 class="chip"
                 data-domain="${domain}"
-                data-active="${domain === activeDomain}"
+                data-active="${isActive}"
             >
                 ${domain}
             </button>
-        `
+        `;
+        }
     ).join("");
 
     if (statusChipsEl) {
@@ -111,7 +133,21 @@ domainChipsEl.addEventListener("click", (event) => {
 
     if (!button) return;
 
-    activeDomain = button.dataset.domain;
+    const clickedDomain = button.dataset.domain;
+    if (clickedDomain === "All") {
+        activeDomains = new Set(["All"]);
+    } else {
+        activeDomains.delete("All");
+        if (activeDomains.has(clickedDomain)) {
+            activeDomains.delete(clickedDomain);
+        } else {
+            activeDomains.add(clickedDomain);
+        }
+        if (activeDomains.size === 0) {
+            activeDomains.add("All");
+        }
+    }
+    activeDomain = activeDomains.has("All") ? "All" : Array.from(activeDomains).join(", ");
 
     renderChips();
     renderCards();
@@ -156,9 +192,10 @@ if (navSearch) {
 
 function matchesFilters(project) {
 
+    const domainMatchCount = getIndexProjectDomainMatchCount(project, activeDomains);
     const domainMatch =
-        activeDomain === "All" ||
-        project.domain === activeDomain;
+        activeDomains.has("All") ||
+        domainMatchCount > 0;
 
     const statusMatch =
         activeStatus === "All" ||
@@ -181,7 +218,21 @@ function matchesFilters(project) {
 
 function renderCards() {
 
-    const filteredProjects = VISIBLE_PROJECTS.filter(matchesFilters);
+    let filteredProjects = VISIBLE_PROJECTS.filter(matchesFilters);
+
+    if (!activeDomains.has("All")) {
+        // Multi-domain match ranking:
+        // Projects matching multiple selected tags pop up first,
+        // followed by projects matching fewer selected tags.
+        filteredProjects.sort((a, b) => {
+            const countA = getIndexProjectDomainMatchCount(a, activeDomains);
+            const countB = getIndexProjectDomainMatchCount(b, activeDomains);
+            if (countB !== countA) {
+                return countB - countA;
+            }
+            return 0;
+        });
+    }
 
     /* Project count */
 

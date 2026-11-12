@@ -1828,8 +1828,13 @@ function statusLabel(raw) {
 
 function parseProposalText(text) {
     const t = String(text || "");
-    const m = t.match(/^Problem:\s*([\s\S]*?)\n\s*\nScope:\s*([\s\S]*)$/);
-    return m ? { problem: m[1].trim(), scope: m[2].trim() } : { problem: t, scope: "" };
+    const pMatch = t.match(/Problem:\s*([\s\S]*?)(?=\n\s*\nScope:|$)/i);
+    const sMatch = t.match(/Scope:\s*([\s\S]*?)(?=\n\s*\nTags:|$)/i);
+    const tMatch = t.match(/Tags:\s*([\s\S]*)$/i);
+    const problem = pMatch ? pMatch[1].trim() : t;
+    const scope = sMatch ? sMatch[1].trim() : "";
+    const tags = tMatch ? tMatch[1].trim().split(",").map(x => x.trim()).filter(Boolean) : [];
+    return { problem, scope, tags };
 }
 
 async function loadProposals() {
@@ -1843,12 +1848,10 @@ async function loadProposals() {
         return;
     }
 
-    // Mentors only see ideas the ILGC faculty has already approved:
-    //   approved / accepted / needs_revision, plus ideas the mentor rejected
-    //   themselves (rejected AND mentor_reviewed_at is set).
+    // Mentors see proposed ideas (pending ILGC faculty review, approved, accepted, or needs revision)
     const rows = (data || []).filter((r) => {
         const st = String(r.status || "pending").toLowerCase();
-        if (st === "approved" || st === "accepted" || st === "needs_revision") return true;
+        if (st === "approved" || st === "accepted" || st === "needs_revision" || st === "pending" || st === "reviewed") return true;
         if (st === "rejected" && r.mentor_reviewed_at) return true;
         return false;
     });
@@ -1884,15 +1887,18 @@ async function loadProposals() {
             _rawId: r[idCol],
             title: r.title || "Untitled idea",
             studentName: nameByEmail.get(studentEmail) || studentEmail || "A student",
+            studentEmail: studentEmail,
             studentSemester: semByEmail.get(studentEmail) ?? "—",
             domain: domainNameById.get(r.domain_id) || r.domain || r.domain_name || "General",
             targetMentor: nameByEmail.get(mentorEmail) || mentorEmail || "a mentor",
+            potentialMentors: r.potential_mentors || r.potentialMentors || nameByEmail.get(mentorEmail) || mentorEmail || "",
+            description: r.description || "",
             proposedDate: String(r.created_at || r.proposed_at || r.submitted_at || "").slice(0, 10),
             // 'approved' (by ILGC faculty) = waiting for the mentor's decision
             status: String(r.status || "").toLowerCase() === "approved" ? "Pending" : statusLabel(r.status),
             problemStatement: r.problem_statement || parsed.problem,
             scope: r.scope || parsed.scope,
-            tags: Array.isArray(r.tags) ? r.tags : [],
+            tags: (Array.isArray(r.tags) && r.tags.length > 0) ? r.tags : (parsed.tags || []),
             feedback: r.mentor_feedback || r.feedback || ""
         };
     });
@@ -1942,13 +1948,18 @@ function renderProposalsDomainFilter() {
 }
 
 function proposalCardHtml(idea) {
-    const actions = (idea.status === "Pending" || idea.status === "Needs Revision")
+    const decisionButtons = (idea.status === "Pending" || idea.status === "Needs Revision")
         ? `
             <button class="btn btn-primary" data-proposal-accept="${idea.id}">Accept</button>
             <button class="btn btn-danger" data-proposal-reject="${idea.id}">Reject</button>
             <button class="btn btn-secondary" data-proposal-revise="${idea.id}">Request Changes</button>
         `
         : "";
+
+    const actions = `
+        <button type="button" class="btn btn-secondary" data-proposal-open="${idea.id}" onclick="window.openProposalDetailModal && window.openProposalDetailModal('${idea.id}')">View Form Details</button>
+        ${decisionButtons}
+    `;
 
     const feedbackHtml = idea.feedback
         ? `<div class="idea-feedback-box"><strong>Mentor feedback</strong>${idea.feedback}</div>`
@@ -1958,7 +1969,7 @@ function proposalCardHtml(idea) {
         <article class="idea-card">
             <div class="idea-card-top">
                 <div>
-                    <p class="idea-title">${idea.title}</p>
+                    <p class="idea-title clickable-idea-title" data-proposal-open="${idea.id}" onclick="window.openProposalDetailModal && window.openProposalDetailModal('${idea.id}')" style="cursor:pointer;color:#007878;text-decoration:underline;" title="Click to view proposal form details">${idea.title}</p>
                     <p class="idea-meta"><strong>${idea.studentName}</strong> · Sem ${idea.studentSemester} · ${idea.domain} · Proposed to ${idea.targetMentor} · ${idea.proposedDate}</p>
                     <div style="margin-top:8px;"><span class="origin-badge origin-student">Student-floated · ${idea.studentName}</span></div>
                 </div>
@@ -1998,6 +2009,72 @@ function renderProposals() {
     empty.classList.add("hidden");
     list.innerHTML = ideas.map(proposalCardHtml).join("");
 }
+
+function openProposalDetailModal(ideaId) {
+    const idea = getProposals().find((i) => String(i.id) === String(ideaId) || String(i._rawId) === String(ideaId) || i.title === ideaId);
+    if (!idea) {
+        console.warn("Could not find proposal for ID:", ideaId);
+        return;
+    }
+
+    let problem = "";
+    let scope = "";
+    let tags = "";
+    const desc = String(idea.description || "");
+    const pMatch = desc.match(/Problem:\s*([\s\S]*?)(?=\n\s*\nScope:|$)/i);
+    const sMatch = desc.match(/Scope:\s*([\s\S]*?)(?=\n\s*\nTags:|$)/i);
+    const tMatch = desc.match(/Tags:\s*([\s\S]*)$/i);
+
+    if (pMatch) problem = pMatch[1].trim();
+    if (sMatch) scope = sMatch[1].trim();
+    if (tMatch) tags = tMatch[1].trim();
+    if (!problem && !scope) {
+        problem = idea.problemStatement || desc;
+        scope = idea.scope || "";
+        tags = Array.isArray(idea.tags) ? idea.tags.join(", ") : (idea.tags || "");
+    }
+
+    const potentialMentors = idea.potentialMentors || idea.targetMentor || "";
+
+    modalBody.innerHTML = `
+        <p class="modal-eyebrow">YOUR IDEA</p>
+        <h2 class="modal-title">Float a Project Idea</h2>
+        <p class="modal-text" style="margin-bottom:18px;">
+            Proposed by <strong>${escapeHtml(idea.studentName)}</strong>
+            ${idea.studentEmail ? `(${escapeHtml(idea.studentEmail)})` : ""}
+            · ${escapeHtml(idea.proposedDate || "")}
+        </p>
+
+        <form class="float-form" onsubmit="event.preventDefault();">
+            <label class="float-label">Project title
+                <input type="text" value="${escapeHtml(idea.title)}" readonly>
+            </label>
+
+            <label class="float-label">Domain
+                <input type="text" value="${escapeHtml(idea.domain)}" readonly>
+            </label>
+
+            <label class="float-label">Problem statement
+                <textarea readonly rows="3">${escapeHtml(problem)}</textarea>
+            </label>
+
+            <label class="float-label">Scope
+                <textarea readonly rows="3">${escapeHtml(scope)}</textarea>
+            </label>
+
+            <label class="float-label">Potential mentors
+                <textarea readonly rows="2">${escapeHtml(potentialMentors)}</textarea>
+            </label>
+
+            <label class="float-label">Tags (comma-separated)
+                <input type="text" value="${escapeHtml(tags)}" readonly>
+            </label>
+        </form>
+    `;
+
+    modalOverlay.classList.remove("hidden");
+}
+window.openProposalDetailModal = openProposalDetailModal;
 
 function openProposalDecisionModal(ideaId, decision) {
     const idea = getProposals().find((i) => i.id === ideaId);
@@ -2682,6 +2759,9 @@ acceptInterest(studentEmail, projectCode);
 rejectInterest(studentEmail, projectCode);
         return;
     }
+
+    const proposalOpen = e.target.closest("[data-proposal-open]");
+    if (proposalOpen) { openProposalDetailModal(proposalOpen.dataset.proposalOpen); return; }
 
     const proposalAccept = e.target.closest("[data-proposal-accept]");
     if (proposalAccept) { openProposalDecisionModal(proposalAccept.dataset.proposalAccept, "Accepted"); return; }

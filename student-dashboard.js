@@ -1014,8 +1014,36 @@ let DOMAINS = ["All"];
 
 let activeStatus = "All";
 let activeDomain = "All";
+let activeDomains = new Set(["All"]);
 let activeMentor = "All";
 let searchTerm = "";
+
+function getProjectDomainList(project) {
+    const list = [];
+    if (Array.isArray(project.domains)) {
+        list.push(...project.domains);
+    }
+    if (project.domain && typeof project.domain === "string") {
+        const parts = project.domain.split(/\s*·\s*|\s*,\s*/);
+        list.push(...parts);
+    }
+    if (Array.isArray(project.tags)) {
+        list.push(...project.tags);
+    }
+    return [...new Set(list.map((d) => String(d).trim().toLowerCase()).filter(Boolean))];
+}
+
+function getProjectDomainMatchCount(project, selectedSet) {
+    if (!selectedSet || selectedSet.has("All")) return 1;
+    const pDomains = getProjectDomainList(project);
+    let count = 0;
+    for (const d of selectedSet) {
+        if (pDomains.includes(String(d).trim().toLowerCase())) {
+            count++;
+        }
+    }
+    return count;
+}
 
 function matchesFilters(project) {
     const projectStatus =
@@ -1023,14 +1051,6 @@ function matchesFilters(project) {
 
     const selectedStatus =
         String(activeStatus || "").trim().toLowerCase();
-
-    const projectDomains = (project.domains || [])
-    .map((domain) =>
-        String(domain).trim().toLowerCase()
-    );
-
-    const selectedDomain =
-       String(activeDomain || "").trim().toLowerCase();
 
     const projectMentor =
         String(project.mentor || "").trim().toLowerCase();
@@ -1042,9 +1062,10 @@ function matchesFilters(project) {
         activeStatus === "All" ||
         projectStatus === selectedStatus;
 
-   const domainMatch =
-      activeDomain === "All" ||
-      projectDomains.includes(selectedDomain);
+    const domainMatchCount = getProjectDomainMatchCount(project, activeDomains);
+    const domainMatch =
+        activeDomains.has("All") ||
+        domainMatchCount > 0;
 
     const mentorMatch =
         activeMentor === "All" ||
@@ -1239,9 +1260,14 @@ function renderDiscoverChips() {
             .replace(/>/g, "&gt;")
             .replace(/"/g, "&quot;");
 
-    document.getElementById("domainChips").innerHTML = DOMAINS.map((domain) => `
-        <button class="chip" data-domain-filter="${escapeChip(domain)}" data-active="${domain === activeDomain}">${escapeChip(domain)}</button>
-    `).join("");
+    const isAllActive = activeDomains.has("All");
+
+    document.getElementById("domainChips").innerHTML = DOMAINS.map((domain) => {
+        const isActive = domain === "All" ? isAllActive : (!isAllActive && activeDomains.has(domain));
+        return `
+        <button class="chip" data-domain-filter="${escapeChip(domain)}" data-active="${isActive}">${escapeChip(domain)}</button>
+    `;
+    }).join("");
 
     const mentorSelect = document.getElementById("discoverMentorSelect");
     if (mentorSelect) {
@@ -1252,7 +1278,22 @@ function renderDiscoverChips() {
 }
 
 function renderDiscover() {
-    const filtered = discoverProjects.filter(matchesFilters);
+    let filtered = discoverProjects.filter(matchesFilters);
+
+    if (!activeDomains.has("All")) {
+        // Multi-domain match ranking:
+        // Projects matching multiple selected tags (e.g. both A and B) appear first,
+        // followed by projects matching fewer selected tags (e.g. A only or B only).
+        filtered.sort((a, b) => {
+            const countA = getProjectDomainMatchCount(a, activeDomains);
+            const countB = getProjectDomainMatchCount(b, activeDomains);
+            if (countB !== countA) {
+                return countB - countA;
+            }
+            return 0;
+        });
+    }
+
     const grid = document.getElementById("discoverGrid");
     const empty = document.getElementById("discoverEmpty");
 
@@ -1819,7 +1860,22 @@ document.getElementById("statusChips").addEventListener("click", (e) => {
 document.getElementById("domainChips").addEventListener("click", (e) => {
     const btn = e.target.closest("[data-domain-filter]");
     if (!btn) return;
-    activeDomain = btn.dataset.domainFilter;
+    const clickedDomain = btn.dataset.domainFilter;
+
+    if (clickedDomain === "All") {
+        activeDomains = new Set(["All"]);
+    } else {
+        activeDomains.delete("All");
+        if (activeDomains.has(clickedDomain)) {
+            activeDomains.delete(clickedDomain);
+        } else {
+            activeDomains.add(clickedDomain);
+        }
+        if (activeDomains.size === 0) {
+            activeDomains.add("All");
+        }
+    }
+    activeDomain = activeDomains.has("All") ? "All" : Array.from(activeDomains).join(", ");
     renderDiscoverChips();
     renderDiscover();
 });
@@ -1974,7 +2030,7 @@ const IDEA_STAGE_LABELS = {
 };
 
 function mapProposalRow(r, nameByEmail, domainNameById) {
-    const studentEmail = r.submitted_by || "";
+    const studentEmail = r.submitted_by || r.student_email || r.proposed_by || "";
     const rawStatus = String(r.status || "pending").toLowerCase();
     const rejectedByMentor = rawStatus === "rejected" && !!r.mentor_reviewed_at;
     const feedback = [
@@ -1982,15 +2038,19 @@ function mapProposalRow(r, nameByEmail, domainNameById) {
         r.mentor_feedback ? `Mentor: ${r.mentor_feedback}` : ""
     ].filter(Boolean).join(" · ");
     return {
-        id: r.proposal_id,
+        id: String(r.proposal_id || r.id || ""),
         title: r.title || "Untitled idea",
+        description: r.description || "",
         studentUserId: studentEmail,
+        studentEmail: studentEmail,
         studentName: nameByEmail.get(studentEmail) || studentEmail || "A student",
-        domain: domainNameById.get(r.domain_id) || "General",
+        domain: domainNameById.get(r.domain_id) || r.domain || "General",
         targetMentor: rawStatus === "pending" || (rawStatus === "rejected" && !rejectedByMentor)
             ? "ILGC Faculty"
-            : "Mentors",
-        proposedDate: String(r.created_at || "").slice(0, 10),
+            : (r.target_mentor || "Mentors"),
+        potentialMentors: r.potential_mentors || r.potentialMentors || r.target_mentor || "",
+        tags: r.tags || [],
+        proposedDate: String(r.created_at || r.submitted_at || "").slice(0, 10),
         reviewedDate: String(r.reviewed_at || "").slice(0, 10),
         rawStatus,
         status: IDEA_STAGE_LABELS[rawStatus] || rawStatus,
@@ -2009,7 +2069,7 @@ async function loadStudentIdeas() {
         return;
     }
 
-    const emails = [...new Set((data || []).map((r) => r.submitted_by).filter(Boolean))];
+    const emails = [...new Set((data || []).flatMap((r) => [r.submitted_by, r.student_email, r.proposed_by]).filter(Boolean))];
 
     let userRows = [];
     if (emails.length > 0) {
@@ -2182,6 +2242,68 @@ function renderMyIdeas() {
     }
     empty.classList.add("hidden");
 
+function openStudentIdeaDetailModal(ideaId) {
+    const idea = getStudentIdeas().find((i) => String(i.id) === String(ideaId) || i.title === ideaId);
+    if (!idea) return;
+
+    let problem = "";
+    let scope = "";
+    let tags = "";
+    const desc = String(idea.description || "");
+    const pMatch = desc.match(/Problem:\s*([\s\S]*?)(?=\n\s*\nScope:|$)/i);
+    const sMatch = desc.match(/Scope:\s*([\s\S]*?)(?=\n\s*\nTags:|$)/i);
+    const tMatch = desc.match(/Tags:\s*([\s\S]*)$/i);
+    if (pMatch) problem = pMatch[1].trim();
+    if (sMatch) scope = sMatch[1].trim();
+    if (tMatch) tags = tMatch[1].trim();
+    if (!problem && !scope) problem = desc || idea.problemStatement || "";
+
+    const potentialMentors = idea.potentialMentors || idea.targetMentor || "";
+
+    modalBody.innerHTML = `
+        <p class="modal-eyebrow">YOUR IDEA</p>
+        <h2 class="modal-title">Float a Project Idea</h2>
+        <p class="modal-text" style="margin-bottom:18px;">
+            Proposed by <strong>${escapeHtml(idea.studentName)}</strong>
+            ${idea.studentEmail ? `(${escapeHtml(idea.studentEmail)})` : ""}
+            · ${escapeHtml(idea.proposedDate || "")}
+        </p>
+
+        <form class="float-form" onsubmit="event.preventDefault();">
+            <label class="float-label">Project title
+                <input type="text" value="${escapeHtml(idea.title)}" readonly>
+            </label>
+
+            <label class="float-label">Domain
+                <input type="text" value="${escapeHtml(idea.domain)}" readonly>
+            </label>
+
+            <label class="float-label">Problem statement
+                <textarea readonly rows="3">${escapeHtml(problem)}</textarea>
+            </label>
+
+            <label class="float-label">Scope
+                <textarea readonly rows="3">${escapeHtml(scope)}</textarea>
+            </label>
+
+            <label class="float-label">Potential mentors
+                <textarea readonly rows="2">${escapeHtml(potentialMentors)}</textarea>
+            </label>
+
+            <label class="float-label">Tags (comma-separated)
+                <input type="text" value="${escapeHtml(tags)}" readonly>
+            </label>
+        </form>
+    `;
+
+    modalOverlay.classList.remove("hidden");
+}
+window.openStudentIdeaDetailModal = openStudentIdeaDetailModal;
+
+function escapeHtml(v) {
+    return String(v ?? "").replace(/[&<>"']/g, (ch) => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"}[ch]));
+}
+
     list.innerHTML = ideas.map((idea) => {
         const mine = isMyIdea(idea);
         const who = mine ? "you" : idea.studentName;
@@ -2191,12 +2313,15 @@ function renderMyIdeas() {
         return `
             <div class="interest-row">
                 <div class="interest-row-main">
-                    <p class="interest-row-title">${idea.title}${mine ? ` <span class="mine-tag">Yours</span>` : ""}</p>
+                    <p class="interest-row-title clickable-idea-title" data-student-idea-open="${idea.id}" onclick="window.openStudentIdeaDetailModal && window.openStudentIdeaDetailModal('${idea.id}')" style="cursor:pointer;color:#007878;text-decoration:underline;" title="Click to view proposal form details">${idea.title}${mine ? ` <span class="mine-tag">Yours</span>` : ""}</p>
                     <p class="interest-row-meta">${idea.domain} · to ${idea.targetMentor} · floated ${idea.proposedDate}</p>
                     <div style="margin-top:6px;"><span class="origin-badge origin-student">Student-floated · ${who}</span></div>
                     ${feedback}
                 </div>
-                <span class="badge ${ideaStatusBadgeClass(idea.status)}">${idea.status}</span>
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <button type="button" class="btn btn-secondary" style="font-size:12px;padding:5px 12px;cursor:pointer;" onclick="window.openStudentIdeaDetailModal && window.openStudentIdeaDetailModal('${idea.id}')">View Form</button>
+                    <span class="badge ${ideaStatusBadgeClass(idea.status)}">${idea.status}</span>
+                </div>
             </div>
         `;
     }).join("");
