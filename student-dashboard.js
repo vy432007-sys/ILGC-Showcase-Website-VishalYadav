@@ -772,62 +772,120 @@ async function loadStudentInterests() {
    SUBMIT INTEREST
 ------------------------------------------------------ */
 
-async function submitInterest(projectId) {
+
+
+function submitInterest(projectId) {
     if (!projectId) return;
 
-    /* Prevent duplicate submission in the UI */
     if (getInterest(projectId)) {
         showToast("You have already expressed interest in this project.");
         return;
     }
 
-    console.log(
-        "Submitting interest:",
-        projectId,
-        "for student:",
-        userId
-    );
+    const project = getAllProjects().find(p => p.id === projectId);
+    if (!project) return;
 
-    const { error } =
-        await window.supabaseClient
-            .from("expressions_of_interest")
-            .insert({
-                student_email: userId,
-                project_code: projectId,
-                status: "pending"
-            });
+    modalBody.innerHTML = `
+        <p class="modal-eyebrow">STUDENT APPLICATION</p>
+        <h2 class="modal-title">Express Interest</h2>
+        <p class="modal-text">Applying for: ${project.title}</p>
 
-    if (error) {
-        console.error(
-            "Could not submit expression of interest:",
-            error
-        );
+        <form id="interestApplicationForm">
 
-        /* PostgreSQL duplicate-key error */
-        if (error.code === "23505") {
-            showToast(
-                "You have already expressed interest in this project."
+            <label class="float-label">Full Name
+                <input value="${studentName}" readonly>
+            </label>
+
+            <label class="float-label">Semester
+                <input value="${studentSemester}" readonly>
+            </label>
+
+            <label class="float-label">Program
+                <input value="${studentProgram}" readonly>
+            </label>
+
+            <label class="float-label">Roll Number
+                <input value="${studentRollNumber}" readonly>
+            </label>
+
+            <label class="float-label">Student Email
+                <input value="${userId}" readonly>
+            </label>
+
+            <label class="float-label">Interested In
+                <input value="${project.title}" readonly>
+            </label>
+
+            <label class="float-label">Skills *
+                <textarea id="interestSkills" required
+                    placeholder="Enter your skills"></textarea>
+            </label>
+
+            <label class="float-label">Interests *
+                <textarea id="interestInterests" required
+                    placeholder="Enter your areas of interest"></textarea>
+            </label>
+
+            <label class="float-label">Student Message *
+                <textarea id="interestMessage" required
+                    placeholder="Why are you interested in this project?"></textarea>
+            </label>
+
+            <div class="modal-actions">
+                <button type="submit" class="btn btn-primary">
+                    Submit Interest
+                </button>
+            </div>
+        </form>
+    `;
+
+    modalOverlay.classList.remove("hidden");
+
+    document.getElementById("interestApplicationForm")
+        .addEventListener("submit", function(e) {
+            e.preventDefault();
+
+            const application = {
+                id: Date.now(),
+                studentName,
+                studentEmail: userId,
+                semester: studentSemester,
+                program: studentProgram,
+                rollNumber: studentRollNumber,
+                projectId: project.id,
+                projectTitle: project.title,
+                mentor: project.mentor,
+                skills: document.getElementById("interestSkills").value.trim(),
+                interests: document.getElementById("interestInterests").value.trim(),
+                message: document.getElementById("interestMessage").value.trim(),
+                status: "Pending",
+                submittedAt: new Date().toISOString()
+            };
+
+            const applications = JSON.parse(
+                localStorage.getItem("ilgc_demo_applications") || "[]"
             );
 
-            await loadStudentInterests();
+            applications.push(application);
+
+            localStorage.setItem(
+                "ilgc_demo_applications",
+                JSON.stringify(applications)
+            );
+
+            interests.push({
+                projectId: project.id,
+                status: "Pending",
+                message: application.message,
+                submittedAt: application.submittedAt
+            });
+
+            showToast("Interest submitted successfully!");
+            closeModal();
             renderAll();
-            return;
-        }
-
-        showToast(
-            "Could not submit your interest. Please try again."
-        );
-
-        return;
-    }
-
-    /* Reload from Supabase so the UI reflects the real database */
-    await loadStudentInterests();
-
-    showToast("Interest submitted ✓");
-
-    renderAll();
+        });
 }
+
 
 /* Demo affordance: since there's no faculty portal wired up
    yet to accept/reject, clicking an already-pending interest

@@ -9,7 +9,10 @@ const role = localStorage.getItem("selectedRole");
 const loggedIn = localStorage.getItem("loggedIn");
 const userId = localStorage.getItem("userId");
 
-if (!loggedIn || role !== "ilgc" || !userId) {
+const isDemoMentor = localStorage.getItem("demoMode") === "true"
+    && (role === "mentor" || role === "ilgc");
+
+if (!loggedIn || (!isDemoMentor && role !== "ilgc") || !userId) {
     window.location.href = "login.html";
 }
 
@@ -325,11 +328,63 @@ async function loadMentorGroups() {
 ====================================================== */
 
 async function loadMentorInterests() {
-    console.log("Loading student interests for mentor:", userId);
 
-    /* --------------------------------------------------
-       1. Get projects assigned to this mentor
-    -------------------------------------------------- */
+    /* ==================================================
+       0. LOCAL DEMO MODE
+    ================================================== */
+
+    if (localStorage.getItem("demoMode") === "true") {
+
+        let applications = [];
+
+        try {
+            const stored = JSON.parse(
+                localStorage.getItem("ilgc_demo_applications") || "[]"
+            );
+
+            applications = Array.isArray(stored) ? stored : [];
+
+        } catch (error) {
+            console.error("Could not load demo applications:", error);
+        }
+
+        mentorInterestData = applications.map((app) => ({
+            studentEmail: String(app.studentEmail || ""),
+            studentName: String(app.studentName || app.studentEmail || "Student"),
+            rollNumber: String(app.rollNumber || ""),
+            program: String(app.program || ""),
+            semester: String(app.semester || ""),
+
+            projectCode: String(app.projectId ?? app.projectCode ?? ""),
+            projectTitle: String(app.projectTitle || "Untitled project"),
+
+            status: String(app.status || "Pending"),
+
+            skills: String(app.skills || "")
+                .split(",")
+                .map(s => s.trim())
+                .filter(Boolean),
+
+            interests: String(app.interests || "")
+                .split(",")
+                .map(s => s.trim())
+                .filter(Boolean),
+
+            message: String(app.message || ""),
+            submittedAt: app.submittedAt || null
+        }));
+
+        console.log("Demo applications loaded:", mentorInterestData);
+
+        return;
+    }
+
+
+    /* ==================================================
+       1. GET PROJECTS ASSIGNED TO THIS MENTOR
+    ================================================== */
+
+    console.log("Loading student interests for mentor:", userId);
 
     const { data: assignments, error: assignmentError } =
         await window.supabaseClient
@@ -355,19 +410,17 @@ async function loadMentorInterests() {
         )
     ];
 
-    console.log(
-        "Projects assigned to mentor:",
-        projectCodes
-    );
+    console.log("Projects assigned to mentor:", projectCodes);
 
     if (projectCodes.length === 0) {
         mentorInterestData = [];
         return;
     }
 
-    /* --------------------------------------------------
-       2. Get expressions of interest
-    -------------------------------------------------- */
+
+    /* ==================================================
+       2. GET EXPRESSIONS OF INTEREST
+    ================================================== */
 
     const { data: interestRows, error: interestError } =
         await window.supabaseClient
@@ -397,19 +450,17 @@ async function loadMentorInterests() {
         return;
     }
 
-    console.log(
-        "Expressions of interest:",
-        interestRows
-    );
+    console.log("Expressions of interest:", interestRows);
 
     if (!interestRows || interestRows.length === 0) {
         mentorInterestData = [];
         return;
     }
 
-    /* --------------------------------------------------
-       3. Get student emails
-    -------------------------------------------------- */
+
+    /* ==================================================
+       3. GET STUDENT EMAILS
+    ================================================== */
 
     const studentEmails = [
         ...new Set(
@@ -419,9 +470,10 @@ async function loadMentorInterests() {
         )
     ];
 
-    /* --------------------------------------------------
-       4. Get student names from users
-    -------------------------------------------------- */
+
+    /* ==================================================
+       4. GET STUDENT NAMES
+    ================================================== */
 
     const { data: users, error: usersError } =
         await window.supabaseClient
@@ -443,9 +495,10 @@ async function loadMentorInterests() {
         ])
     );
 
-    /* --------------------------------------------------
-       5. Get student profile information
-    -------------------------------------------------- */
+
+    /* ==================================================
+       5. GET STUDENT PROFILE INFORMATION
+    ================================================== */
 
     const { data: profiles, error: profilesError } =
         await window.supabaseClient
@@ -479,9 +532,10 @@ async function loadMentorInterests() {
         ])
     );
 
-    /* --------------------------------------------------
-       6. Get project details
-    -------------------------------------------------- */
+
+    /* ==================================================
+       6. GET PROJECT DETAILS
+    ================================================== */
 
     const { data: projects, error: projectsError } =
         await window.supabaseClient
@@ -508,16 +562,19 @@ async function loadMentorInterests() {
         ])
     );
 
-    /* --------------------------------------------------
-       7. Build final data
-    -------------------------------------------------- */
+
+    /* ==================================================
+       7. BUILD FINAL MENTOR INTEREST DATA
+    ================================================== */
 
     mentorInterestData = interestRows.map((row) => {
+
         const user = userMap.get(row.student_email) || {};
         const profile = profileMap.get(row.student_email) || {};
         const project = projectMap.get(row.project_code) || {};
 
         return {
+
             studentEmail: row.student_email,
 
             studentName:
@@ -568,9 +625,9 @@ async function loadMentorInterests() {
 
             status:
                 String(row.status || "pending")
-                    .charAt(0)
-                    .toUpperCase() +
-                String(row.status || "pending").slice(1).toLowerCase(),
+                    .charAt(0).toUpperCase() +
+                String(row.status || "pending")
+                    .slice(1).toLowerCase(),
 
             message:
                 row.message || "",
@@ -1609,95 +1666,139 @@ function injectInterestTableStyles() {
     document.head.appendChild(st);
 }
 
+
 async function acceptInterest(studentEmail, projectCode) {
 
-    const { error } =
-        await window.supabaseClient.rpc(
-            "review_expression_of_interest",
-            {
-                p_student_email: studentEmail,
-                p_project_code: projectCode,
-                p_action: "accepted",
-                p_comment: null
-            }
+    if (localStorage.getItem("demoMode") === "true") {
+        const applications = JSON.parse(
+            localStorage.getItem("ilgc_demo_applications") || "[]"
         );
 
-    if (error) {
-        console.error(
-            "Could not accept student interest:",
-            error
+        const application = applications.find(
+            (app) =>
+                app.studentEmail === studentEmail &&
+                String(app.projectId ?? app.projectCode) === String(projectCode)
         );
 
-        showToast(
-            "Could not accept this interest."
+        if (!application) {
+            showToast("Application not found.");
+            return;
+        }
+
+        application.status = "Accepted";
+
+        localStorage.setItem(
+            "ilgc_demo_applications",
+            JSON.stringify(applications)
         );
+
+        showToast(`${application.studentName} accepted onto the project ✓`);
+
+        closeModal();
+        await loadMentorInterests();
+        renderInterest();
+        renderHome();
 
         return;
     }
 
-    const interest =
-        mentorInterestData.find(
-            (item) =>
-                item.studentEmail === studentEmail &&
-                item.projectCode === projectCode
-        );
-
-    showToast(
-        `${interest?.studentName || "Student"} accepted onto the project ✓`
+    const { error } = await window.supabaseClient.rpc(
+        "review_expression_of_interest",
+        {
+            p_student_email: studentEmail,
+            p_project_code: projectCode,
+            p_action: "accepted",
+            p_comment: null
+        }
     );
 
-    closeModal();
+    if (error) {
+        console.error("Could not accept student interest:", error);
+        showToast("Could not accept this interest.");
+        return;
+    }
 
+    const interest = mentorInterestData.find(
+        (item) =>
+            item.studentEmail === studentEmail &&
+            item.projectCode === projectCode
+    );
+
+    showToast(`${interest?.studentName || "Student"} accepted onto the project ✓`);
+
+    closeModal();
     await loadMentorGroups();
     await loadMentorSharePointData();
     await loadMentorInterests();
-
     renderAll();
 }
 
+
+
 async function rejectInterest(studentEmail, projectCode) {
 
-    const { error } =
-        await window.supabaseClient.rpc(
-            "review_expression_of_interest",
-            {
-                p_student_email: studentEmail,
-                p_project_code: projectCode,
-                p_action: "rejected",
-                p_comment: null
-            }
+    if (localStorage.getItem("demoMode") === "true") {
+        const applications = JSON.parse(
+            localStorage.getItem("ilgc_demo_applications") || "[]"
         );
 
-    if (error) {
-        console.error(
-            "Could not reject student interest:",
-            error
+        const application = applications.find(
+            (app) =>
+                app.studentEmail === studentEmail &&
+                String(app.projectId ?? app.projectCode) === String(projectCode)
         );
 
-        showToast(
-            "Could not reject this interest."
+        if (!application) {
+            showToast("Application not found.");
+            return;
+        }
+
+        application.status = "Rejected";
+
+        localStorage.setItem(
+            "ilgc_demo_applications",
+            JSON.stringify(applications)
         );
+
+        showToast(`${application.studentName}'s application was rejected.`);
+
+        closeModal();
+        await loadMentorInterests();
+        renderInterest();
+        renderHome();
 
         return;
     }
 
-    const interest =
-        mentorInterestData.find(
-            (item) =>
-                item.studentEmail === studentEmail &&
-                item.projectCode === projectCode
-        );
-
-    showToast(
-        `${interest?.studentName || "Student"}'s interest was declined.`
+    const { error } = await window.supabaseClient.rpc(
+        "review_expression_of_interest",
+        {
+            p_student_email: studentEmail,
+            p_project_code: projectCode,
+            p_action: "rejected",
+            p_comment: null
+        }
     );
 
+    if (error) {
+        console.error("Could not reject student interest:", error);
+        showToast("Could not reject this interest.");
+        return;
+    }
+
+    const interest = mentorInterestData.find(
+        (item) =>
+            item.studentEmail === studentEmail &&
+            item.projectCode === projectCode
+    );
+
+    showToast(`${interest?.studentName || "Student"}'s interest was declined.`);
+
     closeModal();
-
     await loadMentorInterests();
-
     renderAll();
 }
+
 
 
 /* ======================================================
