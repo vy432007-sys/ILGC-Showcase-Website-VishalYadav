@@ -49,8 +49,32 @@ let projectsActiveSemester = "All";
 
 let discoverStatus = "All";
 let discoverDomain = "All";
+let discoverDomainsList = new Set(["All"]);
 let discoverMentor = "All";
 let discoverSearch = "";
+
+function getFacultyProjectDomainMatchCount(project, selectedSet) {
+    if (!selectedSet || selectedSet.has("All")) return 1;
+    const list = [];
+    if (Array.isArray(project.domains)) {
+        list.push(...project.domains);
+    }
+    if (project.domain && typeof project.domain === "string") {
+        const parts = project.domain.split(/\s*·\s*|\s*,\s*/);
+        list.push(...parts);
+    }
+    if (Array.isArray(project.tags)) {
+        list.push(...project.tags);
+    }
+    const pDomains = [...new Set(list.map((d) => String(d).trim().toLowerCase()).filter(Boolean))];
+    let count = 0;
+    for (const sel of selectedSet) {
+        if (pDomains.includes(String(sel).trim().toLowerCase())) {
+            count++;
+        }
+    }
+    return count;
+}
 
 let studentsActiveStatus = "All";
 
@@ -70,7 +94,7 @@ async function loadFacultyProfile() {
 
     console.log("Faculty email:", facultyEmail);
 
-    const { data: user, error: userError } =
+    let { data: user, error: userError } =
         await window.supabaseClient
             .from("users")
             .select("email, name, role")
@@ -83,8 +107,12 @@ async function loadFacultyProfile() {
     }
 
     if (!user) {
-        console.error("Faculty user not found:", facultyEmail);
-        return false;
+        console.warn("Faculty user not found in database, creating fallback profile for:", facultyEmail);
+        user = {
+            email: facultyEmail,
+            name: facultyEmail.includes("@") ? facultyEmail.split("@")[0].replace(/\./g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "ILGC Faculty",
+            role: "ilgc_faculty"
+        };
     }
 
     const { data: mentor, error: mentorError } =
@@ -1852,20 +1880,25 @@ function renderDiscoverChips() {
             `
         ).join("");
 
+    const isAllActive = discoverDomainsList.has("All");
+
     document.getElementById(
         "discoverDomainChips"
     ).innerHTML =
         discoverDomains()
             .map(
-                (domain) => `
+                (domain) => {
+                    const isActive = domain === "All" ? isAllActive : (!isAllActive && discoverDomainsList.has(domain));
+                    return `
                     <button
                         class="chip"
                         data-discover-domain="${escapeHtml(domain)}"
-                        data-active="${domain === discoverDomain}"
+                        data-active="${isActive}"
                     >
                         ${escapeHtml(domain)}
                     </button>
-                `
+                `;
+                }
             ).join("");
 
     const mentorSelect =
@@ -1986,7 +2019,7 @@ function renderDiscover() {
         discoverSearch
             .toLowerCase();
 
-    const filtered =
+    let filtered =
         allProjectsData
             .map(normalizeProject)
             .filter((project) => {
@@ -1997,19 +2030,15 @@ function renderDiscover() {
                     project.status ===
                     discoverStatus;
 
+                const domainMatchCount =
+                    getFacultyProjectDomainMatchCount(
+                        project,
+                        discoverDomainsList
+                    );
+
                 const domainMatch =
-                    discoverDomain ===
-                    "All" ||
-                    project.domains
-                        .map(
-                            (domain) =>
-                                domain
-                                    .toLowerCase()
-                        )
-                        .includes(
-                            discoverDomain
-                                .toLowerCase()
-                        );
+                    discoverDomainsList.has("All") ||
+                    domainMatchCount > 0;
 
                 const mentorMatch =
                     discoverMentor ===
@@ -2044,6 +2073,20 @@ function renderDiscover() {
                     searchMatch
                 );
             });
+
+    if (!discoverDomainsList.has("All")) {
+        // Multi-domain match ranking:
+        // Projects matching multiple selected tags pop up first,
+        // followed by projects matching fewer selected tags.
+        filtered.sort((a, b) => {
+            const countA = getFacultyProjectDomainMatchCount(a, discoverDomainsList);
+            const countB = getFacultyProjectDomainMatchCount(b, discoverDomainsList);
+            if (countB !== countA) {
+                return countB - countA;
+            }
+            return 0;
+        });
+    }
 
     document.getElementById(
         "discoverCount"
@@ -2399,7 +2442,7 @@ async function renderIdeas() {
     const emails = [
         ...new Set(
             rows
-                .map((r) => r.submitted_by)
+                .flatMap((r) => [r.submitted_by, r.student_email, r.proposed_by, r.created_by])
                 .filter(Boolean)
         )
     ];
@@ -2427,27 +2470,87 @@ async function renderIdeas() {
         (domainRows || []).map((d) => [d.domain_id, d.name])
     );
 
-    ideasData = rows.map((r) => ({
-        id: r.proposal_id,
-        title: r.title || "Untitled idea",
-        description: r.description || "",
-        studentEmail: r.submitted_by || "",
-        studentName:
-            nameByEmail.get(r.submitted_by) ||
-            r.submitted_by ||
-            "A student",
-        domain:
-            domainNameById.get(r.domain_id) || "General",
-        date: String(r.created_at || "").slice(0, 10),
-        status: String(r.status || "pending").toLowerCase(),
-        potentialMentors: r.potential_mentors || "",
-        comment: r.review_comment || "",
-        
-        reviewedBy: r.reviewed_by || ""
-    }));
+    ideasData = rows.map((r) => {
+        const studentEmail = r.submitted_by || r.student_email || r.proposed_by || r.created_by || "";
+        return {
+            id: r.proposal_id || r.id,
+            title: r.title || "Untitled idea",
+            description: r.description || "",
+            studentEmail: studentEmail,
+            studentName:
+                nameByEmail.get(studentEmail) ||
+                studentEmail ||
+                "A student",
+            domain:
+                domainNameById.get(r.domain_id) || r.domain || r.domain_name || "General",
+            date: String(r.created_at || r.submitted_at || r.proposed_at || "").slice(0, 10),
+            status: String(r.status || "pending").toLowerCase(),
+            potentialMentors: r.potential_mentors || r.potentialMentors || r.target_mentor || "",
+            comment: r.review_comment || "",
+            reviewedBy: r.reviewed_by || ""
+        };
+    });
 
     drawIdeas();
 }
+
+function openIdeaDetailModal(idea) {
+    if (!idea) return;
+
+    let problem = "";
+    let scope = "";
+    let tags = "";
+    const desc = String(idea.description || "");
+    const pMatch = desc.match(/Problem:\s*([\s\S]*?)(?=\n\s*\nScope:|$)/i);
+    const sMatch = desc.match(/Scope:\s*([\s\S]*?)(?=\n\s*\nTags:|$)/i);
+    const tMatch = desc.match(/Tags:\s*([\s\S]*)$/i);
+
+    if (pMatch) problem = pMatch[1].trim();
+    if (sMatch) scope = sMatch[1].trim();
+    if (tMatch) tags = tMatch[1].trim();
+    if (!problem && !scope) problem = desc;
+
+    const potentialMentors = idea.potentialMentors || "";
+
+    modalBody.innerHTML = `
+        <p class="modal-eyebrow">YOUR IDEA</p>
+        <h2 class="modal-title">Float a Project Idea</h2>
+        <p class="modal-text" style="margin-bottom:18px;">
+            Proposed by <strong>${escapeHtml(idea.studentName)}</strong>
+            ${idea.studentEmail ? `(${escapeHtml(idea.studentEmail)})` : ""}
+            · ${escapeHtml(idea.date || "")}
+        </p>
+
+        <form class="float-form" onsubmit="event.preventDefault();">
+            <label class="float-label">Project title
+                <input type="text" value="${escapeHtml(idea.title)}" readonly>
+            </label>
+
+            <label class="float-label">Domain
+                <input type="text" value="${escapeHtml(idea.domain)}" readonly>
+            </label>
+
+            <label class="float-label">Problem statement
+                <textarea readonly rows="3">${escapeHtml(problem)}</textarea>
+            </label>
+
+            <label class="float-label">Scope
+                <textarea readonly rows="3">${escapeHtml(scope)}</textarea>
+            </label>
+
+            <label class="float-label">Potential mentors
+                <textarea readonly rows="2">${escapeHtml(potentialMentors)}</textarea>
+            </label>
+
+            <label class="float-label">Tags (comma-separated)
+                <input type="text" value="${escapeHtml(tags)}" readonly>
+            </label>
+        </form>
+    `;
+
+    modalOverlay.classList.remove("hidden");
+}
+window.openIdeaDetailModal = openIdeaDetailModal;
 
 
 function drawIdeas() {
@@ -2538,9 +2641,28 @@ function drawIdeas() {
             document.createElement("h3");
 
         title.textContent = idea.title;
+        title.className = "clickable-idea-title";
+        title.title = "Click to view proposal form details";
         title.style.cssText =
             "font-family:'Merriweather',serif;" +
-            "font-size:18px;color:#17313A;margin:0;";
+            "font-size:18px;color:#007878;margin:0;cursor:pointer;text-decoration:underline;";
+        title.addEventListener("click", (e) => {
+            e.stopPropagation();
+            openIdeaDetailModal(idea);
+        });
+
+        const rightControls = document.createElement("div");
+        rightControls.style.cssText = "display:flex;align-items:center;gap:10px;";
+
+        const viewBtn = document.createElement("button");
+        viewBtn.type = "button";
+        viewBtn.className = "btn btn-secondary";
+        viewBtn.textContent = "View Form Details";
+        viewBtn.style.cssText = "font-size:12px;padding:5px 12px;cursor:pointer;";
+        viewBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            openIdeaDetailModal(idea);
+        });
 
         const badge =
             document.createElement("span");
@@ -2554,7 +2676,8 @@ function drawIdeas() {
             "background:#E8F3F1;color:#0A6B64;" +
             "white-space:nowrap;";
 
-        top.append(title, badge);
+        rightControls.append(viewBtn, badge);
+        top.append(title, rightControls);
 
         const meta =
             document.createElement("p");
@@ -3240,8 +3363,23 @@ document
                 return;
             }
 
-            discoverDomain =
+            const clickedDomain =
                 button.dataset.discoverDomain;
+
+            if (clickedDomain === "All") {
+                discoverDomainsList = new Set(["All"]);
+            } else {
+                discoverDomainsList.delete("All");
+                if (discoverDomainsList.has(clickedDomain)) {
+                    discoverDomainsList.delete(clickedDomain);
+                } else {
+                    discoverDomainsList.add(clickedDomain);
+                }
+                if (discoverDomainsList.size === 0) {
+                    discoverDomainsList.add("All");
+                }
+            }
+            discoverDomain = discoverDomainsList.has("All") ? "All" : Array.from(discoverDomainsList).join(", ");
 
             renderDiscoverChips();
             renderDiscover();

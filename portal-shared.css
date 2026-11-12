@@ -1177,3 +1177,60 @@ body.sidebar-collapsed .sidebar {
 @media (max-width: 620px) {
     .filter-group-label { flex-basis: 100%; padding-top: 0; }
 }
+
+/* ======================================================
+   FLOAT IDEA FORM & MODAL VIEW
+====================================================== */
+.float-form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.float-label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #607278;
+}
+
+.float-form input,
+.float-form select,
+.float-form textarea {
+    padding: 11px 14px;
+    border: 1px solid #D7E5E3;
+    border-radius: 9px;
+    font-size: 14px;
+    font-family: inherit;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    color: #17313A;
+    background: #ffffff;
+}
+
+.float-form textarea {
+    min-height: 70px;
+    resize: vertical;
+}
+
+.float-form input:focus,
+.float-form select:focus,
+.float-form textarea:focus {
+    outline: none;
+    border-color: #007878;
+}
+
+.clickable-idea-title {
+    cursor: pointer;
+    transition: color 0.15s ease, text-decoration 0.15s ease;
+}
+
+.clickable-idea-title:hover {
+    color: #007878 !important;
+    text-decoration: underline;
+}
