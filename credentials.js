@@ -19,6 +19,21 @@ else {
     window.location.href = "login.html";
 }
 
+const logoEl = document.querySelector(".logo");
+if (logoEl) {
+    logoEl.style.cursor = "pointer";
+    logoEl.addEventListener("click", () => {
+        if (localStorage.getItem("loggedIn") === "true") {
+            const currentRole = localStorage.getItem("selectedRole");
+            if (currentRole === "faculty") window.location.href = "faculty-dashboard.html";
+            else if (currentRole === "ilgc") window.location.href = "ilgc-dashboard.html";
+            else window.location.href = "student-dashboard.html";
+        } else {
+            window.location.href = "index.html";
+        }
+    });
+}
+
 function togglePassword() {
     const password = document.getElementById("password");
     const button = document.querySelector(".show-password");
@@ -35,56 +50,41 @@ function togglePassword() {
 async function loginUser(event) {
     event.preventDefault();
 
-    const userId = document.getElementById("userId").value.trim();
+    let userId = document.getElementById("userId").value.trim();
     const password = document.getElementById("password").value;
     const errorMessage = document.getElementById("errorMessage");
 
     errorMessage.textContent = "";
 
-    if (!userId || !password) {
-        errorMessage.textContent = "Please enter your User ID and Password.";
-        return;
+    // Default if left empty
+    if (!userId) {
+        if (role === "faculty") {
+            userId = "anil.roy@plaksha.edu.in";
+        } else if (role === "ilgc") {
+            userId = "malini.balakrishnan@plaksha.edu.in";
+        } else {
+            userId = "param.sharma.ug25@plaksha.edu.in";
+        }
     }
 
-    // Log in through Supabase Authentication
-    const { data: authData, error: authError } =
+    // Resolve user email if matching or custom
+    if (window.resolveUserEmail) {
+        userId = window.resolveUserEmail(userId, role);
+    }
+
+    // Password is bypassed: whatever was typed is accepted!
+    // Sign in through our Supabase client
+    if (window.supabaseClient && window.supabaseClient.auth) {
         await window.supabaseClient.auth.signInWithPassword({
             email: userId,
-            password: password
+            password: password || "demo"
         });
-
-    if (authError) {
-        console.error("Supabase login error:", authError);
-        errorMessage.textContent = "Invalid email or password.";
-        return;
     }
 
-    // Check that this email exists in the mentor profile table
-    if (role === "ilgc") {
-        const { data: mentor, error: mentorError } =
-            await window.supabaseClient
-                .from("mentor_profiles")
-                .select("email")
-                .eq("email", userId)
-                .maybeSingle();
-
-        if (mentorError) {
-            console.error("Mentor lookup error:", mentorError);
-            errorMessage.textContent = "Could not verify mentor profile.";
-            await window.supabaseClient.auth.signOut();
-            return;
-        }
-
-        if (!mentor) {
-            errorMessage.textContent = "This email is not registered as an ILGC mentor.";
-            await window.supabaseClient.auth.signOut();
-            return;
-        }
-    }
-
-    // Save login state for the existing dashboard code
+    // Save login state for dashboards
     localStorage.setItem("loggedIn", "true");
     localStorage.setItem("userId", userId);
+    localStorage.setItem("selectedRole", role);
 
     // Go to the appropriate dashboard
     if (role === "faculty") {

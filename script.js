@@ -342,3 +342,9 @@ document.addEventListener("keydown", (event) => {
 
 renderChips();
 renderCards();
+
+const portalBtn = document.querySelector("#plaksha-login a");
+if (portalBtn && localStorage.getItem("loggedIn") === "true") {
+    const activeRole = localStorage.getItem("selectedRole");
+    portalBtn.href = activeRole === "faculty" ? "faculty-dashboard.html" : (activeRole === "ilgc" ? "ilgc-dashboard.html" : "student-dashboard.html");
+}

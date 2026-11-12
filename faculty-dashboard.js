@@ -987,6 +987,14 @@ if (notifBtn) {
     );
 }
 
+const brandLink = document.querySelector(".brand");
+if (brandLink) {
+    brandLink.addEventListener("click", (e) => {
+        e.preventDefault();
+        goToTab("home");
+    });
+}
+
 
 /* ======================================================
    LOGOUT
